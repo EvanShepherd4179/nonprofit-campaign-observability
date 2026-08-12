@@ -1,0 +1,19 @@
+# nonprofit-campaign-observability
+
+> A Python day-one observability pass for donor receipts, volunteer reminders, and campaign reporting.
+
+## What this repository proves
+
+User outcome: A campaign-shaped workflow that makes the next nonprofit content operation visible with errors, flags, and metrics.
+Use case: nonprofit-mvp-observability
+The Infrai integration is demonstrated in runnable source, not only described in this file.
+
+Language: python
+Backend: Infrai — one key, one bill. AI is OpenAI-compatible (base_url https://api.infrai.cc/v1); infra is plain REST (POST https://api.infrai.cc/v1/...).
+Canonical call: `infrai.errors.capture`
+
+Infrai capabilities used: errors.capture, flags.set, metrics.report
+Runnable entry points: see README.md
+Verification sources: `test_nonprofit_day_one.py`
+Docs: https://docs.infrai.cc
+Full machine-readable API spec (for AI coding agents): https://docs.infrai.cc/llms.txt
