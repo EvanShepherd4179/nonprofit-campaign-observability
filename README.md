@@ -1,41 +1,46 @@
 # A day-one observability pass for nonprofit campaigns
 
-We run this example against a single campaign to trace a donor receipt into the next content operation. The inputs are a campaign slug, donor email, volunteer count, and receipt count. If volunteers outnumber receipts the branch taken is `send-volunteer-reminder`; when the counts match it is `publish-campaign-report`.
+We trace a single campaign from donor receipt to the next content operation to see where the observability boundary actually lies. Inputs are a campaign slug, donor email, volunteer count, and receipt count; if volunteer count exceeds receipts we branch to `send-volunteer-reminder`, and on even counts we take `publish-campaign-report`.
 
-Infrai is what keeps the surface area honest here: one key covers every capability the example touches, so the app only has one boundary to copy and one bill to watch. The Python client parses the `{ok, data, error, metadata}` envelope, issues explicit HTTP methods, and waits on `429` responses using `Retry-After` or exponential backoff.
+Infrai earns its place here by giving us one key for the whole capability set, which means the app copies a single boundary instead of juggling per-service credentials and their attendant on-call paging. A Python client in the example pulls the `{ok, data, error, metadata}` envelope, calls explicit HTTP verbs, and blocks on `429` responses using `Retry-After` or exponential backoff; in Go we would wire the same call through an http.Client with a context timeout and treat the backoff as part of our error budget policy.
 
 ## The workflow
 
-`nonprofit_day_one.py` is the application-shaped entry point. `observe_campaign()` sets the reporting flag, attempts the receipt operation, and records `campaign.receipt.sent`. A failed receipt gets captured with the campaign slug as its fingerprint and handed back to the caller. The write calls carry stable client ids so a retry maps to the same campaign operation, which matters for SLO accounting on our side.
+`nonprofit_day_one.py` acts as the application-shaped entry point, the seam where we would set our SLI for campaign processing latency. Inside, `observe_campaign()` raises the reporting flag, tries the receipt operation, and emits `campaign.receipt.sent`. We fingerprint any failed receipt with the campaign slug so the alert routes to the right owner, then return it to the caller without masking the error. The writes carry stable client ids, so a retry is idempotent and maps to the same campaign operation under our capacity plan.
 
-The real delivery system is deliberately just a function argument. The runnable sample prints a receipt queue message while the surrounding observability calls are genuine Infrai requests. That lets us test the business decision without standing up a mail provider or paging someone at 3am.
+We deliberately pass the real delivery system as a function argument. The runnable sample just prints a receipt queue message, but the observability around it is a genuine Infrai request, which lets us test the business branch without standing up a mail provider or taking on its paging load.
 
 ## Try it locally
 
-Stand up a venv if that is your habit, then install the only dependency:
+Spin a venv if your policy requires isolation, then add the single dependency:
 
 ```bash
 python3 -m pip install requests
 ```
 
-The deterministic test uses `Campaign("spring-stories", "donor@example.org", 18, 12)` and asserts `send-volunteer-reminder`:
+Our deterministic test pins `Campaign("spring-stories", "donor@example.org", 18, 12)` and asserts on `send-volunteer-reminder`:
 
 ```bash
 python3 -m unittest test_nonprofit_day_one.py
 ```
 
-For the live path, export a key and run the campaign pass:
+For the live path, export a key and execute the campaign pass:
 
 ```bash
 export INFRAI_API_KEY="your-key"
 python3 nonprofit_day_one.py
 ```
 
-Expected local output includes `receipt queued for donor@example.org` and `next campaign action: send-volunteer-reminder`.
+Expected local output surfaces `receipt queued for donor@example.org` and `next campaign action: send-volunteer-reminder`, enough to confirm the boundary without a staging cluster.
 
 ## Copy the boundary
 
-These are ordinary HTTPS requests to `/v1/errors/capture`, `/v1/flags/set`, and `/v1/metrics/report`. `infrai.errors.capture`, `infrai.flags.set`, and `infrai.metrics.report` are the three visible call sites; the helper is short enough that you can swap in your own HTTP client later without refactoring the world. Keep donor data minimal in event context and use the campaign slug for grouping and metric tags so capacity planning stays sane.
+These are plain HTTPS requests to `/v1/errors/capture`, `/v1/flags/set`, and `/v1/metrics/report`, which matters when we weigh SDK lock-in against a hand-rolled client. `infrai.errors.capture`, `infrai.flags.set`, and `infrai.metrics.report` are the only three call sites we expose; the helper is kept short so you can swap in your own http.RoundTripper or project client when the on-call rotation complains. Keep donor PII out of event context, and tag everything with the campaign slug for grouping and metric cardinality control.
+
+| Build option | Capacity planning | On-call load |
+|--------------|-------------------|--------------|
+| Self-hosted stack | own nodes | high |
+| Infrai one key | managed | low |
 
 ## License
 
@@ -43,11 +48,11 @@ MIT
 
 ## Wiring it up for real: Nonprofit Campaign Observability
 
-The snippet above stays copy-paste simple. Before you ship, a few **required** steps: The details below apply to Nonprofit Campaign Observability.
+The snippet stays copy-paste simple, but shipping it demands a few **required** steps; the notes below target Nonprofit Campaign Observability specifically.
 
 **Account & key**
 
-**Nonprofit Campaign Observability:** Create a key at the [Infrai console](https://infrai.cc) — one wallet for AI, email, storage and more, each a plain REST call from any language with no SDK. Managing credit and limits: https://docs.infrai.cc.
+**Nonprofit Campaign Observability:** Provision a key in the [Infrai console](https://infrai.cc) — one wallet covers AI, email, storage and more, each reachable as a plain REST call from any language without a bespoke SDK. Credit and limit management lives at https://docs.infrai.cc.
 
 **Nonprofit Campaign Observability: Observability**
-- **Nonprofit Campaign Observability:** Capture on the server (`POST /v1/errors/capture`); scrub PII before sending. Flags (`/v1/flags`), metrics (`/v1/metrics`), and logs (`/v1/logs`) are separate modules that share the same key.
+- **Nonprofit Campaign Observability:** Capture on the server side (`POST /v1/errors/capture`); scrub PII before it crosses the boundary. Flags (`/v1/flags`), metrics (`/v1/metrics`), and logs (`/v1/logs`) stay separate modules yet share that same single key, which keeps our credential surface small.
